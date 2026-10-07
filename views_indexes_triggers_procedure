@@ -1,0 +1,195 @@
+-- =====================================================
+-- Views_Indexes_Triggers_Procedures.sql
+-- =====================================================
+USE pet_adoption_network;
+
+-- ---------- INDEXES ----------
+CREATE INDEX idx_animals_status       ON animals(status);
+CREATE INDEX idx_animals_species_size ON animals(species, size);
+CREATE INDEX idx_app_status           ON adoption_applications(status);
+CREATE INDEX idx_med_next_checkup     ON medical_records(next_checkup_date);
+CREATE INDEX idx_foster_home_status   ON fostering(foster_home_id, status);
+
+-- ---------- VIEWS ----------
+CREATE OR REPLACE VIEW Available_Animals_View AS
+SELECT a.animal_id, a.name, a.species, a.breed, a.size, a.age_months, a.gender,
+       s.name AS shelter_name, s.city, s.phone AS shelter_phone
+FROM animals a
+LEFT JOIN shelters s ON s.shelter_id = a.shelter_id
+WHERE a.status = 'Available';
+
+CREATE OR REPLACE VIEW Medical_Followup_View AS
+SELECT r.record_id, a.animal_id, a.name AS animal_name, r.exam_type, r.diagnosis,
+       r.next_checkup_date, r.followup_status,
+       CASE
+         WHEN r.followup_status = 'Pending' AND r.next_checkup_date < CURDATE()  THEN 'Overdue'
+         WHEN r.followup_status = 'Pending' AND r.next_checkup_date >= CURDATE() THEN 'Upcoming'
+         WHEN r.followup_status = 'Done' THEN 'Completed'
+         ELSE 'Not Required'
+       END AS followup_state
+FROM medical_records r
+JOIN animals a ON a.animal_id = r.animal_id;
+
+CREATE OR REPLACE VIEW Adoption_Application_Summary_View AS
+SELECT ap.application_id, ap.application_date, ap.status AS application_status,
+       a.name AS animal_name, a.species, ad.full_name AS adopter_name, ad.email,
+       v.visit_date, v.status AS visit_status, v.recommendation
+FROM adoption_applications ap
+JOIN animals  a  ON a.animal_id  = ap.animal_id
+JOIN adopters ad ON ad.adopter_id = ap.adopter_id
+LEFT JOIN (
+    SELECT hv.*, ROW_NUMBER() OVER (PARTITION BY application_id
+                                    ORDER BY visit_date DESC, visit_id DESC) AS rn
+    FROM home_visits hv
+) v ON v.application_id = ap.application_id AND v.rn = 1;
+
+-- ---------- TRIGGERS ----------
+DELIMITER //
+
+CREATE TRIGGER trg_medical_alert_after_insert
+AFTER INSERT ON medical_records
+FOR EACH ROW
+BEGIN
+    IF NEW.followup_status = 'Pending' AND NEW.next_checkup_date < CURDATE() THEN
+        INSERT IGNORE INTO medical_alerts(record_id, alert_date, message)
+        VALUES (NEW.record_id, CURDATE(),
+                CONCAT('Overdue follow-up for animal #', NEW.animal_id));
+    END IF;
+END//
+
+CREATE TRIGGER trg_adoption_after_insert
+AFTER INSERT ON adoptions
+FOR EACH ROW
+BEGIN
+    IF NEW.status = 'Completed' THEN
+        UPDATE animals SET status = 'Adopted' WHERE animal_id = NEW.animal_id;
+    END IF;
+END//
+
+CREATE TRIGGER trg_fostering_before_insert
+BEFORE INSERT ON fostering
+FOR EACH ROW
+BEGIN
+    IF NEW.status = 'Active' AND
+       (SELECT COUNT(*) FROM fostering
+         WHERE foster_home_id = NEW.foster_home_id AND status = 'Active')
+       >= (SELECT max_capacity FROM foster_homes WHERE foster_home_id = NEW.foster_home_id) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Foster home is at maximum capacity';
+    END IF;
+END//
+
+CREATE TRIGGER trg_fostering_before_update
+BEFORE UPDATE ON fostering
+FOR EACH ROW
+BEGIN
+    IF NEW.status = 'Active' AND OLD.status <> 'Active' AND
+       (SELECT COUNT(*) FROM fostering
+         WHERE foster_home_id = NEW.foster_home_id AND status = 'Active')
+       >= (SELECT max_capacity FROM foster_homes WHERE foster_home_id = NEW.foster_home_id) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Foster home is at maximum capacity';
+    END IF;
+END//
+
+CREATE TRIGGER trg_fostering_after_insert
+AFTER INSERT ON fostering
+FOR EACH ROW
+BEGIN
+    IF NEW.status = 'Active' THEN
+        UPDATE animals SET status = 'Fostered' WHERE animal_id = NEW.animal_id;
+    END IF;
+END//
+
+CREATE TRIGGER trg_fostering_after_update
+AFTER UPDATE ON fostering
+FOR EACH ROW
+BEGIN
+    IF NEW.status = 'Completed' AND OLD.status = 'Active' THEN
+        UPDATE animals SET status = 'Available'
+        WHERE animal_id = NEW.animal_id AND status = 'Fostered';
+    ELSEIF NEW.status = 'Active' AND OLD.status <> 'Active' THEN
+        UPDATE animals SET status = 'Fostered' WHERE animal_id = NEW.animal_id;
+    END IF;
+END//
+
+-- ---------- STORED PROCEDURES ----------
+CREATE PROCEDURE Approve_Adoption(IN p_application_id INT)
+BEGIN
+    DECLARE v_status VARCHAR(20);
+    DECLARE v_animal INT;
+    DECLARE v_adopter INT;
+    DECLARE v_visit_status VARCHAR(20);
+    DECLARE v_reco VARCHAR(20);
+    DECLARE v_animal_status VARCHAR(20);
+
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        RESIGNAL;
+    END;
+
+    START TRANSACTION;
+
+    SELECT status, animal_id, adopter_id INTO v_status, v_animal, v_adopter
+    FROM adoption_applications WHERE application_id = p_application_id FOR UPDATE;
+
+    IF v_status IS NULL THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Application not found';
+    END IF;
+    IF v_status <> 'Approved' THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Application is not Approved';
+    END IF;
+
+    SELECT status, recommendation INTO v_visit_status, v_reco
+    FROM home_visits WHERE application_id = p_application_id
+    ORDER BY visit_date DESC, visit_id DESC LIMIT 1;
+
+    IF v_visit_status IS NULL OR v_visit_status <> 'Completed' THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Latest home visit is not Completed';
+    END IF;
+    IF v_reco <> 'Recommended' THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Home visit did not recommend adoption';
+    END IF;
+
+    SELECT status INTO v_animal_status FROM animals WHERE animal_id = v_animal FOR UPDATE;
+    IF v_animal_status = 'Adopted' THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Animal is already adopted';
+    END IF;
+
+    INSERT INTO adoptions(application_id, animal_id, adopter_id, adoption_date, adoption_fee, status)
+    VALUES (p_application_id, v_animal, v_adopter, CURDATE(), 50.00, 'Completed');
+
+    COMMIT;
+END//
+
+CREATE PROCEDURE Animal_Availability_Report()
+BEGIN
+    SELECT * FROM Available_Animals_View;
+END//
+
+CREATE PROCEDURE Match_Animals_For_Adopter(IN p_adopter_id INT)
+BEGIN
+    SELECT v.*
+    FROM Available_Animals_View v
+    JOIN adopters ad ON ad.adopter_id = p_adopter_id
+    WHERE v.species = ad.preferred_species AND v.size = ad.preferred_size;
+END//
+
+CREATE PROCEDURE Generate_Overdue_Medical_Alerts()
+BEGIN
+    DECLARE v_count INT DEFAULT 0;
+    INSERT INTO medical_alerts(record_id, alert_date, message)
+    SELECT r.record_id, CURDATE(), CONCAT('Overdue follow-up for animal #', r.animal_id)
+    FROM medical_records r
+    WHERE r.followup_status = 'Pending' AND r.next_checkup_date < CURDATE()
+      AND NOT EXISTS (SELECT 1 FROM medical_alerts m WHERE m.record_id = r.record_id);
+    SET v_count = ROW_COUNT();
+    SELECT v_count AS alerts_created;
+END//
+
+DELIMITER ;
+
+-- ---------- SAMPLE DASHBOARD QUERIES ----------
+-- SELECT status, COUNT(*) FROM animals GROUP BY status;
+-- SELECT COUNT(*) FROM adoption_applications WHERE status = 'Pending';
+-- SELECT COUNT(*) FROM Medical_Followup_View WHERE followup_state = 'Overdue';
+-- SELECT s.name, COUNT(a.animal_id) AS animals FROM shelters s LEFT JOIN animals a USING (shelter_id) GROUP BY s.name;
