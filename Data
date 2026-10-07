@@ -1,0 +1,86 @@
+-- =====================================================
+-- Data.sql : sample data (run after the views/triggers file)
+-- =====================================================
+USE pet_adoption_network;
+
+INSERT INTO shelters(name,address,city,phone,capacity) VALUES
+('Happy Paws Shelter','12 Park Road','Pune','020-555-0101',40),
+('Safe Haven Rescue','88 Lake View','Mumbai','022-555-0102',30),
+('City Animal Care','5 Station Road','Delhi','011-555-0103',50);
+
+INSERT INTO animals(name,species,breed,size,age_months,gender,status,intake_date,shelter_id) VALUES
+('Bruno','Dog','Labrador','Large',36,'Male','Available','2026-05-10',1),
+('Misty','Cat','Persian','Small',24,'Female','Available','2026-06-02',1),
+('Rocky','Dog','Beagle','Medium',18,'Male','Fostered','2026-07-15',2),
+('Luna','Cat','Siamese','Small',12,'Female','Adopted','2026-03-20',2),
+('Coco','Rabbit','Dutch','Small',8,'Female','Available','2026-08-01',3),
+('Max','Dog','German Shepherd','Large',48,'Male','Available','2026-04-11',1),
+('Bella','Dog','Pug','Small',30,'Female','Adopted','2026-02-14',3),
+('Oliver','Cat','Maine Coon','Medium',20,'Male','Available','2026-08-20',2),
+('Daisy','Dog','Indie','Medium',14,'Female','Available','2026-09-05',NULL),
+('Kiwi','Bird','Parakeet','Small',10,'Unknown','Available','2026-09-10',3);
+
+INSERT INTO adopters(full_name,email,phone,address,home_type,preferred_species,preferred_size) VALUES
+('Anita Sharma','anita@example.com','9000000001','Pune','House','Dog','Large'),
+('Rahul Verma','rahul@example.com','9000000002','Mumbai','Apartment','Cat','Small'),
+('Priya Nair','priya@example.com','9000000003','Delhi','House','Dog','Medium'),
+('Karan Mehta','karan@example.com','9000000004','Pune','Apartment','Rabbit','Small'),
+('Sneha Iyer','sneha@example.com','9000000005','Mumbai','Apartment','Cat','Medium'),
+('Arjun Rao','arjun@example.com','9000000006','Delhi','Apartment','Dog','Small');
+
+INSERT INTO foster_homes(name,phone,address,max_capacity) VALUES
+('Green Valley Fosters','9100000001','Pune',2),
+('Meera Home','9100000002','Mumbai',1),
+('Sunrise Fosters','9100000003','Delhi',3);
+
+INSERT INTO fostering(animal_id,foster_home_id,start_date,end_date,status) VALUES
+(3,1,'2026-07-20',NULL,'Completed'),   -- inserted as Completed, then reactivated below
+(2,3,'2026-06-05','2026-07-30','Completed'),
+(4,2,'2026-03-21','2026-03-30','Completed');
+-- Reactivating a placement fires the capacity trigger and marks Rocky as Fostered
+UPDATE fostering SET status='Active' WHERE fostering_id=1;
+
+INSERT INTO adoption_applications(adopter_id,animal_id,application_date,status) VALUES
+(2,4,'2026-03-25','Approved'),
+(6,7,'2026-02-18','Approved'),
+(1,1,'2026-09-12','Approved'),
+(3,9,'2026-09-20','Under Review'),
+(4,5,'2026-09-25','Pending'),
+(5,8,'2026-09-28','Approved'),
+(1,6,'2026-08-30','Withdrawn'),
+(2,2,'2026-07-05','Rejected');
+
+INSERT INTO home_visits(application_id,visit_date,status,observations,recommendation) VALUES
+(1,'2026-03-28','Completed','Clean apartment, secure balcony','Recommended'),
+(2,'2026-02-22','Completed','Quiet home, experienced owner','Recommended'),
+(3,'2026-09-15','Completed','Large fenced garden','Recommended'),
+(4,'2026-10-10','Scheduled',NULL,'Pending'),
+(6,'2026-10-01','Completed','Small flat, no pet-safe space','Not Recommended'),
+(8,'2026-07-08','Completed','Unsafe window access','Not Recommended');
+
+INSERT INTO adoptions(application_id,animal_id,adopter_id,adoption_date,adoption_fee,status) VALUES
+(1,4,2,'2026-04-02',50.00,'Completed'),
+(2,7,6,'2026-02-28',75.00,'Completed');
+
+-- Triggers create alerts for already-overdue Pending rows on insert
+INSERT INTO medical_records(animal_id,exam_date,exam_type,diagnosis,treatment,vet_name,next_checkup_date,followup_status) VALUES
+(1,'2026-05-12','Vaccination','Healthy','Rabies vaccine','Dr. Rao','2026-06-12','Done'),
+(1,'2026-09-01','Check-up','Mild ear infection','Ear drops','Dr. Rao','2026-09-20','Pending'),
+(2,'2026-06-05','Vaccination','Healthy','Booster','Dr. Iyer','2026-12-05','Pending'),
+(3,'2026-07-18','Deworming','Parasites','Deworming tablet','Dr. Iyer','2026-10-18','Pending'),
+(5,'2026-08-03','Check-up','Healthy','None','Dr. Shah','2026-09-03','Pending'),
+(6,'2026-04-15','Surgery','Hip dysplasia','Physiotherapy','Dr. Rao','2026-10-30','Pending'),
+(8,'2026-08-22','Vaccination','Healthy','Booster','Dr. Shah','2026-11-22','Pending'),
+(9,'2026-09-06','Check-up','Skin allergy','Medicated shampoo','Dr. Iyer','2026-09-30','Pending'),
+(10,'2026-09-12','Check-up','Healthy','None','Dr. Shah',NULL,'Not Required'),
+(4,'2026-03-22','Vaccination','Healthy','Booster','Dr. Iyer','2026-09-22','Done');
+
+-- ---------- DEMO CALLS ----------
+-- CALL Approve_Adoption(3);   -- succeeds (Bruno)
+-- CALL Approve_Adoption(6);   -- fails: visit not recommended
+-- CALL Approve_Adoption(5);   -- fails: application not Approved
+-- CALL Generate_Overdue_Medical_Alerts();
+-- CALL Match_Animals_For_Adopter(1);
+-- Bulk-load the CSV dataset into a staging table if needed:
+-- LOAD DATA LOCAL INFILE 'pet_adoption_dataset.csv' INTO TABLE animals_staging
+--   FIELDS TERMINATED BY ',' IGNORE 1 LINES;
