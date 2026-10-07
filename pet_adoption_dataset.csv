@@ -1,0 +1,11 @@
+animal_id,name,species,breed,size,age_months,gender,status,intake_date,shelter_name
+1,Bruno,Dog,Labrador,Large,36,Male,Available,2026-05-10,Happy Paws Shelter
+2,Misty,Cat,Persian,Small,24,Female,Available,2026-06-02,Happy Paws Shelter
+3,Rocky,Dog,Beagle,Medium,18,Male,Fostered,2026-07-15,Safe Haven Rescue
+4,Luna,Cat,Siamese,Small,12,Female,Adopted,2026-03-20,Safe Haven Rescue
+5,Coco,Rabbit,Dutch,Small,8,Female,Available,2026-08-01,City Animal Care
+6,Max,Dog,German Shepherd,Large,48,Male,Available,2026-04-11,Happy Paws Shelter
+7,Bella,Dog,Pug,Small,30,Female,Adopted,2026-02-14,City Animal Care
+8,Oliver,Cat,Maine Coon,Medium,20,Male,Available,2026-08-20,Safe Haven Rescue
+9,Daisy,Dog,Indie,Medium,14,Female,Available,2026-09-05,
+10,Kiwi,Bird,Parakeet,Small,10,Unknown,Available,2026-09-10,City Animal Care
